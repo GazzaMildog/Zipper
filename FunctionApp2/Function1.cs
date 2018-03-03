@@ -16,12 +16,16 @@ namespace FunctionApp2
     public static class Function1
     {
         [FunctionName("Function1")]
-        public static HttpResponseMessage Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = @"HttpTriggersCSharp/name/{sv}/{ss}/{srt}/{sp}/{st}/{se}/{sig}/{sAccName}/{containername}")]HttpRequestMessage req, string sv,
-            string ss, string srt, string sp, string st, string se, string sig, string sAccName, string containername,
+        public static HttpResponseMessage Run([HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = @"HttpTriggersCSharp/name/{sv}/{ss}/{srt}/{sp}/{st}/{se}/{sig}/{sAccName}/{containername}/{smtpToAdd}/{smtpDomainAdd}")]HttpRequestMessage req, string sv,
+            string ss, string srt, string sp, string st, string se, string sig, string sAccName, string containername, string smtpToAdd, string smtpDomainAdd,
              TraceWriter log)
 
         {
             log.Info("Setting up variables...");
+
+            string smtpFQAddress = (smtpToAdd+@"@"+smtpDomainAdd);
+            log.Info("The email address is " + smtpFQAddress);
+            System.Threading.Thread.Sleep(3000);
 
             // FORMATTING OF SAS - SharedAccessSignature=sv=2017-04-17/ss=*stuff*/srt=*stuff*/sp=*stuff*/st=*stuff*/se=*stuff*/sig=*stuff*/*put the name of the storage account here*
             // this will be added to the main url in the format shown above
@@ -42,7 +46,15 @@ namespace FunctionApp2
             CloudStorageAccount storageAccount = null;
             //int zipTransitionCount = 0;
             //int amountOfParts = 0;
-
+            try
+            {
+                System.IO.Directory.Delete(@"D:\local\Zipper", true);
+                System.IO.Directory.Delete(@"D:\local\Zip", true);
+            }
+            catch
+            {
+                log.Info("directories don't exist already. skipping...");
+            }
             System.IO.Directory.CreateDirectory("D:\\local\\Zipper");
             System.IO.Directory.CreateDirectory("D:\\local\\Zip");
             log.Info("succeeded in making dirs");
@@ -177,22 +189,50 @@ namespace FunctionApp2
             log.Info("Beginning zipping process");
 
             string zipPath = (@"D:\local\Zip\Recordings from " + DateTime.Now.ToString("yyyy-dd-M--HH-mm-ss") + ".zip");
-            zipFileName = ("Recordings from " + DateTime.Now.ToString("yyyy - dd - M--HH - mm - ss") + ".zip");
+            zipFileName = ("Recordings from " + DateTime.Now.ToString("yyyy-dd-M--HH-mm-ss") + ".zip");
             System.IO.Compression.ZipFile.CreateFromDirectory(@"D:\local\Zipper", zipPath, CompressionLevel.Optimal, true);
             log.Info("zipping complete");
 
-            container = blobClient.GetContainerReference("uploads");
+            string uploads = "uploads";
+            container = blobClient.GetContainerReference(uploads);
             container.CreateIfNotExists();
 
-            CloudBlockBlob uploadblob = container.GetBlockBlobReference(zipFileName);
+            log.Info("uploading " + zipFileName + "...");
 
+            CloudBlockBlob uploadblob = container.GetBlockBlobReference(zipFileName);
             uploadblob.UploadFromFile(zipPath);
+
+            log.Info("completed upload of " + zipFileName);
 
             System.IO.Directory.Delete(@"D:\local\Zipper", true);
             System.IO.Directory.Delete(@"D:\local\Zip", true);
 
             uploadblob.Uri.AbsoluteUri.ToString();
             //outputstream.Close();
+
+       
+
+
+            // configuring the blob to be downloadable for 2 hours
+            //SharedAccessBlobPolicy sasConstraints = new SharedAccessBlobPolicy();
+            //sasConstraints.SharedAccessStartTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+            //sasConstraints.SharedAccessExpiryTime = DateTimeOffset.UtcNow.AddHours(2);
+            //sasConstraints.Permissions = SharedAccessBlobPermissions.Read;
+
+            //string blobUri = uploadblob.GetSharedAccessSignature(sasConstraints);
+
+
+                HttpWebRequest webHook = (HttpWebRequest)WebRequest.Create();
+            webHook.Method = "POST";
+            webHook.ContentType = "text/x-json";
+            webHook.ContentLength = 0;
+            webHook.Headers.Add("saname:" + sAccName);
+            webHook.Headers.Add("blob:"+zipFileName);
+            webHook.Headers.Add("container:"+uploads);
+            webHook.Headers.Add("email:"+smtpFQAddress);
+            HttpWebResponse response = (HttpWebResponse)webHook.GetResponse();
+
+
 
             // Fetching the name from the path parameter in the request URL
             return req.CreateResponse(HttpStatusCode.OK, "Task has completed successfully. URI to uploaded blob: " + uploadblob.Uri.AbsoluteUri.ToString());
